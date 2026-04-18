@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { AnalyzeInputMode, AnalyzeResponse } from "@/lib/analysis-types";
+import type { AnalyzeApiSuccess } from "@/lib/analysis-types";
 import { AnalysisResults } from "./analysis-results";
 
 function Spinner() {
@@ -14,23 +14,18 @@ function Spinner() {
 }
 
 export function AnalyzeClient() {
-  const [mode, setMode] = useState<AnalyzeInputMode>("url");
-  const [value, setValue] = useState("");
+  const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalyzeResponse | null>(null);
+  const [result, setResult] = useState<AnalyzeApiSuccess | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
 
-    const trimmed = value.trim();
+    const trimmed = text.trim();
     if (!trimmed) {
-      setError(
-        mode === "url"
-          ? "Enter a news article URL to scan."
-          : "Paste some article text to scan."
-      );
+      setError("Paste some article text to analyze.");
       setResult(null);
       return;
     }
@@ -42,11 +37,11 @@ export function AnalyzeClient() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, value: trimmed }),
+        body: JSON.stringify({ text: trimmed }),
       });
 
       const payload = (await res.json()) as
-        | AnalyzeResponse
+        | AnalyzeApiSuccess
         | { error?: string };
 
       if (!res.ok) {
@@ -58,7 +53,7 @@ export function AnalyzeClient() {
         return;
       }
 
-      if ("headline" in payload && "categories" in payload) {
+      if ("details" in payload && "bias_score" in payload) {
         setResult(payload);
       } else {
         setError("Unexpected response from the server.");
@@ -76,77 +71,20 @@ export function AnalyzeClient() {
         onSubmit={handleSubmit}
         className="rounded-2xl border border-zinc-200/90 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10"
       >
-        <fieldset>
-          <legend className="sr-only">Input type</legend>
-          <div
-            className="flex rounded-xl bg-zinc-100 p-1 dark:bg-zinc-900"
-            role="radiogroup"
-            aria-label="Input type"
-          >
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === "url"}
-              onClick={() => {
-                setMode("url");
-                setError(null);
-              }}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-600 ${
-                mode === "url"
-                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-              }`}
-            >
-              News article URL
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={mode === "text"}
-              onClick={() => {
-                setMode("text");
-                setError(null);
-              }}
-              className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-600 ${
-                mode === "text"
-                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50"
-                  : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-              }`}
-            >
-              Raw text
-            </button>
-          </div>
-        </fieldset>
-
-        <label htmlFor="analyze-input" className="mt-5 block">
+        <label htmlFor="article-text" className="block">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-            {mode === "url" ? "Article URL" : "Article text"}
+            Article text
           </span>
-          {mode === "url" ? (
-            <input
-              id="analyze-input"
-              name="value"
-              type="url"
-              inputMode="url"
-              autoComplete="url"
-              placeholder="https://www.example.com/news/..."
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              disabled={loading}
-              className="mt-2 block w-full rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm text-zinc-900 shadow-inner placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 dark:focus:ring-zinc-500/30"
-            />
-          ) : (
-            <textarea
-              id="analyze-input"
-              name="value"
-              rows={8}
-              placeholder="Paste the full article or excerpt here…"
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-              disabled={loading}
-              className="mt-2 block w-full resize-y rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm leading-relaxed text-zinc-900 shadow-inner placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 dark:focus:ring-zinc-500/30"
-            />
-          )}
+          <textarea
+            id="article-text"
+            name="text"
+            rows={10}
+            placeholder="Paste the full article or an excerpt here…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={loading}
+            className="mt-2 block w-full resize-y rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm leading-relaxed text-zinc-900 shadow-inner placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 dark:focus:ring-zinc-500/30"
+          />
         </label>
 
         {error ? (
@@ -167,10 +105,10 @@ export function AnalyzeClient() {
             {loading ? (
               <>
                 <Spinner />
-                Scanning…
+                Analyzing…
               </>
             ) : (
-              "Scan for information"
+              "Analyze for bias"
             )}
           </button>
         </div>

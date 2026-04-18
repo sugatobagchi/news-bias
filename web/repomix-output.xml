@@ -1,0 +1,1012 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+app/
+  api/
+    analyze/
+      route.ts
+  components/
+    analysis-results.tsx
+    analyze-client.tsx
+    theme-provider.tsx
+    theme-shell.tsx
+    theme-toggle.tsx
+  favicon.ico
+  globals.css
+  layout.tsx
+  page.tsx
+lib/
+  analysis-types.ts
+  parse-analysis.ts
+public/
+  file.svg
+  globe.svg
+  next.svg
+  vercel.svg
+  window.svg
+.gitignore
+AGENTS.md
+CLAUDE.md
+eslint.config.mjs
+next.config.ts
+package.json
+postcss.config.mjs
+README.md
+tsconfig.json
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="app/api/analyze/route.ts">
+import { NextResponse } from "next/server";
+import {
+  normalizeBiasAnalysis,
+  parseModelAnalysisString,
+} from "@/lib/parse-analysis";
+
+/** Vercel / long inference — adjust if your host uses different limits */
+export const maxDuration = 120;
+
+const DEFAULT_INFERENCE_URL =
+  "https://news-bias-server-896252675202.asia-south1.run.app/analyze";
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function inferenceUrl(): string {
+  return (
+    process.env.NEWS_BIAS_INFERENCE_URL?.trim() || DEFAULT_INFERENCE_URL
+  );
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
+}
+
+export async function POST(request: Request) {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON body." },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
+  const text =
+    typeof body === "object" &&
+    body !== null &&
+    "text" in body &&
+    typeof (body as { text?: unknown }).text === "string"
+      ? (body as { text: string }).text.trim()
+      : "";
+
+  if (!text) {
+    return NextResponse.json(
+      { error: "Request body must include a non-empty \"text\" field." },
+      { status: 400, headers: corsHeaders }
+    );
+  }
+
+  const upstream = inferenceUrl();
+  let upstreamJson: unknown;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 110_000);
+    const res = await fetch(upstream, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: ac.signal,
+    });
+    clearTimeout(t);
+
+    const rawText = await res.text();
+    try {
+      upstreamJson = JSON.parse(rawText) as unknown;
+    } catch {
+      return NextResponse.json(
+        {
+          error: "Inference server returned non-JSON.",
+        },
+        { status: 502, headers: corsHeaders }
+      );
+    }
+
+    if (!res.ok) {
+      return NextResponse.json(
+        {
+          error: `Inference server error (${res.status}).`,
+        },
+        { status: 502, headers: corsHeaders }
+      );
+    }
+  } catch (e) {
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? "Inference request timed out."
+        : "Could not reach the inference server.";
+    return NextResponse.json(
+      { error: msg },
+      { status: 502, headers: corsHeaders }
+    );
+  }
+
+  const analysisField =
+    typeof upstreamJson === "object" &&
+    upstreamJson !== null &&
+    "analysis" in upstreamJson &&
+    typeof (upstreamJson as { analysis?: unknown }).analysis === "string"
+      ? (upstreamJson as { analysis: string }).analysis
+      : null;
+
+  if (!analysisField) {
+    return NextResponse.json(
+      { error: "Inference response missing an \"analysis\" string." },
+      { status: 502, headers: corsHeaders }
+    );
+  }
+
+  try {
+    const parsed = parseModelAnalysisString(analysisField);
+    const normalized = normalizeBiasAnalysis(parsed);
+    return NextResponse.json(normalized, { headers: corsHeaders });
+  } catch (e) {
+    const hint =
+      e instanceof Error ? e.message : "Failed to parse model output.";
+    return NextResponse.json(
+      {
+        error: `Could not parse model JSON: ${hint}`,
+      },
+      { status: 502, headers: corsHeaders }
+    );
+  }
+}
+</file>
+
+<file path="app/components/analysis-results.tsx">
+import type { AnalyzeApiSuccess } from "@/lib/analysis-types";
+
+function formatScore(value: string | number | null): string {
+  if (value === null) return "—";
+  if (typeof value === "number") return String(value);
+  return value;
+}
+
+export function AnalysisResults({ data }: { data: AnalyzeApiSuccess }) {
+  const { bias_score, bias_category, analysis_summary, insufficient_content } =
+    data;
+
+  return (
+    <section className="mt-10 w-full" aria-live="polite">
+      <div className="rounded-2xl border border-zinc-200/90 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Results
+        </p>
+        <h2 className="mt-1 text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          Bias analysis
+        </h2>
+
+        {insufficient_content ? (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+            The model flagged this excerpt as too short or not news-like to
+            score reliably.
+          </p>
+        ) : null}
+
+        <dl className="mt-6 grid gap-6 sm:grid-cols-2">
+          <div className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Bias score
+            </dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+              {formatScore(bias_score)}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Bias category
+            </dt>
+            <dd className="mt-2 text-sm font-medium leading-relaxed text-zinc-900 dark:text-zinc-100">
+              {bias_category ?? "—"}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="mt-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Analysis summary
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {analysis_summary ?? "—"}
+          </p>
+        </div>
+
+        <ExtraDetails details={data.details} />
+      </div>
+    </section>
+  );
+}
+
+function ExtraDetails({
+  details,
+}: {
+  details: Record<string, unknown>;
+}) {
+  const keys = Object.keys(details).filter(
+    (k) =>
+      ![
+        "bias_score",
+        "bias_category",
+        "analysis_summary",
+        "insufficient_content",
+      ].includes(k)
+  );
+  if (keys.length === 0) return null;
+
+  return (
+    <details className="mt-6 rounded-xl border border-zinc-100 bg-zinc-50/50 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+      <summary className="cursor-pointer text-sm font-medium text-zinc-800 dark:text-zinc-200">
+        Additional model fields
+      </summary>
+      <dl className="mt-3 space-y-3 text-sm">
+        {keys.map((key) => (
+          <div key={key}>
+            <dt className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              {key}
+            </dt>
+            <dd className="mt-0.5 text-zinc-700 dark:text-zinc-300">
+              {formatDetailValue(details[key])}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+function formatDetailValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+</file>
+
+<file path="app/components/analyze-client.tsx">
+"use client";
+
+import { useState } from "react";
+import type { AnalyzeApiSuccess } from "@/lib/analysis-types";
+import { AnalysisResults } from "./analysis-results";
+
+function Spinner() {
+  return (
+    <span
+      className="inline-block size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+      aria-hidden
+    />
+  );
+}
+
+export function AnalyzeClient() {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<AnalyzeApiSuccess | null>(null);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setError("Paste some article text to analyze.");
+      setResult(null);
+      return;
+    }
+
+    setLoading(true);
+    setResult(null);
+
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: trimmed }),
+      });
+
+      const payload = (await res.json()) as
+        | AnalyzeApiSuccess
+        | { error?: string };
+
+      if (!res.ok) {
+        const msg =
+          "error" in payload && payload.error
+            ? payload.error
+            : "Something went wrong. Try again.";
+        setError(msg);
+        return;
+      }
+
+      if ("details" in payload && "bias_score" in payload) {
+        setResult(payload);
+      } else {
+        setError("Unexpected response from the server.");
+      }
+    } catch {
+      setError("Network error. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="w-full max-w-2xl">
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-2xl border border-zinc-200/90 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10"
+      >
+        <label htmlFor="article-text" className="block">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            Article text
+          </span>
+          <textarea
+            id="article-text"
+            name="text"
+            rows={10}
+            placeholder="Paste the full article or an excerpt here…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            disabled={loading}
+            className="mt-2 block w-full resize-y rounded-xl border border-zinc-200 bg-white px-4 py-3 text-sm leading-relaxed text-zinc-900 shadow-inner placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-400/30 disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-zinc-500 dark:focus:ring-zinc-500/30"
+          />
+        </label>
+
+        {error ? (
+          <p
+            className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200"
+            role="alert"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        <div className="mt-6 flex items-center justify-end gap-3">
+          <button
+            type="submit"
+            disabled={loading}
+            className="inline-flex min-h-11 min-w-44 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white dark:focus-visible:ring-zinc-500"
+          >
+            {loading ? (
+              <>
+                <Spinner />
+                Analyzing…
+              </>
+            ) : (
+              "Analyze for bias"
+            )}
+          </button>
+        </div>
+      </form>
+
+      {result ? <AnalysisResults data={result} /> : null}
+    </div>
+  );
+}
+</file>
+
+<file path="app/components/theme-provider.tsx">
+"use client";
+
+import { ThemeProvider as NextThemesProvider } from "next-themes";
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  return (
+    <NextThemesProvider
+      attribute="class"
+      defaultTheme="system"
+      enableSystem
+      disableTransitionOnChange
+      storageKey="news-bias-theme"
+    >
+      {children}
+    </NextThemesProvider>
+  );
+}
+</file>
+
+<file path="app/components/theme-shell.tsx">
+"use client";
+
+import dynamic from "next/dynamic";
+import { ThemeProvider } from "./theme-provider";
+
+const ThemeToggle = dynamic(
+  () => import("./theme-toggle").then((mod) => mod.ThemeToggle),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="h-9 w-54 rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80"
+        aria-hidden
+      />
+    ),
+  }
+);
+
+export function ThemeShell({ children }: { children: React.ReactNode }) {
+  return (
+    <ThemeProvider>
+      <div className="pointer-events-none fixed right-0 top-0 z-50 flex justify-end p-4 sm:p-6">
+        <div className="pointer-events-auto">
+          <ThemeToggle />
+        </div>
+      </div>
+      {children}
+    </ThemeProvider>
+  );
+}
+</file>
+
+<file path="app/components/theme-toggle.tsx">
+"use client";
+
+import { useTheme } from "next-themes";
+
+type ThemeChoice = "system" | "light" | "dark";
+
+const options: { value: ThemeChoice; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+export function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+
+  const active: ThemeChoice =
+    theme === "light" || theme === "dark" ? theme : "system";
+
+  return (
+    <div
+      className="inline-flex rounded-xl border border-zinc-200/90 bg-zinc-100/90 p-1 shadow-sm ring-1 ring-zinc-950/5 backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/90 dark:ring-white/10"
+      role="radiogroup"
+      aria-label="Color theme"
+    >
+      {options.map(({ value, label }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={active === value}
+          onClick={() => setTheme(value)}
+          className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-500 sm:px-3 sm:text-sm ${
+            active === value
+              ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50"
+              : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+</file>
+
+<file path="app/globals.css">
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+</file>
+
+<file path="app/layout.tsx">
+import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
+import { ThemeShell } from "./components/theme-shell";
+import "./globals.css";
+
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "News Bias Detector",
+  description:
+    "Paste article text to analyze political framing, emotional language, and narrative balance.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      suppressHydrationWarning
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body className="relative min-h-full flex flex-col">
+        <ThemeShell>{children}</ThemeShell>
+      </body>
+    </html>
+  );
+}
+</file>
+
+<file path="app/page.tsx">
+import { AnalyzeClient } from "./components/analyze-client";
+
+export default function Home() {
+  return (
+    <div className="flex min-h-full flex-1 flex-col bg-zinc-50 dark:bg-zinc-950">
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-16 sm:px-6 sm:py-24">
+        <header className="mb-10 text-center sm:mb-12">
+          <p className="text-sm font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+            News Bias Detector
+          </p>
+          <h1 className="mt-2 text-balance text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
+            Understand bias before you share
+          </h1>
+          <p className="mx-auto mt-3 max-w-xl text-pretty text-base text-zinc-600 dark:text-zinc-400">
+            Paste raw article text below. We run it through a small language
+            model tuned for political framing, emotional language, and narrative
+            balance—then summarize the score, category, and rationale.
+          </p>
+        </header>
+
+        <div className="flex justify-center">
+          <AnalyzeClient />
+        </div>
+      </main>
+    </div>
+  );
+}
+</file>
+
+<file path="lib/analysis-types.ts">
+import type { NormalizedBiasAnalysis } from "@/lib/parse-analysis";
+
+/** POST /api/analyze — primary body from web UI and extension */
+export type AnalyzeTextBody = {
+  text: string;
+};
+
+export type AnalyzeApiError = {
+  error: string;
+};
+
+export type AnalyzeApiSuccess = NormalizedBiasAnalysis;
+
+export type { NormalizedBiasAnalysis };
+</file>
+
+<file path="lib/parse-analysis.ts">
+/**
+ * Extract the first balanced JSON object from arbitrary model output (prompt + JSON tail).
+ */
+export function extractFirstJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+
+  return null;
+}
+
+export function parseModelAnalysisString(raw: string): Record<string, unknown> {
+  const trimmed = raw.trim();
+
+  try {
+    const direct = JSON.parse(trimmed) as unknown;
+    if (direct && typeof direct === "object" && !Array.isArray(direct)) {
+      return direct as Record<string, unknown>;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  const extracted = extractFirstJsonObject(trimmed);
+  if (!extracted) {
+    throw new Error("Could not find a JSON object in the model output.");
+  }
+
+  try {
+    const parsed = JSON.parse(extracted) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    throw new Error("Found JSON-like text but parsing failed.");
+  }
+
+  throw new Error("Unexpected model output shape.");
+}
+
+function asNumberOrString(v: unknown): string | number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "") return v;
+  return null;
+}
+
+export type NormalizedBiasAnalysis = {
+  bias_score: string | number | null;
+  bias_category: string | null;
+  analysis_summary: string | null;
+  insufficient_content: boolean;
+  /** Full parsed object from the model for optional display / extension use */
+  details: Record<string, unknown>;
+};
+
+export function normalizeBiasAnalysis(
+  parsed: Record<string, unknown>
+): NormalizedBiasAnalysis {
+  const insufficient =
+    parsed.insufficient_content === true ||
+    parsed.insufficient_content === "true";
+
+  const bias_score =
+    asNumberOrString(parsed.bias_score) ??
+    asNumberOrString(parsed.overall_neutrality_score) ??
+    asNumberOrString(parsed.political_leaning_score) ??
+    asNumberOrString(parsed.emotional_language_score) ??
+    null;
+
+  let bias_category: string | null = null;
+  if (typeof parsed.bias_category === "string" && parsed.bias_category.trim()) {
+    bias_category = parsed.bias_category.trim();
+  } else if (
+    typeof parsed.favored_or_targeted === "string" &&
+    parsed.favored_or_targeted.trim()
+  ) {
+    bias_category = parsed.favored_or_targeted.trim();
+  }
+
+  let analysis_summary: string | null = null;
+  if (typeof parsed.analysis_summary === "string") {
+    analysis_summary = parsed.analysis_summary.trim() || null;
+  } else if (typeof parsed.explanation === "string") {
+    analysis_summary = parsed.explanation.trim() || null;
+  }
+
+  return {
+    bias_score,
+    bias_category,
+    analysis_summary,
+    insufficient_content: insufficient,
+    details: { ...parsed },
+  };
+}
+</file>
+
+<file path="public/file.svg">
+<svg fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 13.5V5.41a1 1 0 0 0-.3-.7L9.8.29A1 1 0 0 0 9.08 0H1.5v13.5A2.5 2.5 0 0 0 4 16h8a2.5 2.5 0 0 0 2.5-2.5m-1.5 0v-7H8v-5H3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1M9.5 5V2.12L12.38 5zM5.13 5h-.62v1.25h2.12V5zm-.62 3h7.12v1.25H4.5zm.62 3h-.62v1.25h7.12V11z" clip-rule="evenodd" fill="#666" fill-rule="evenodd"/></svg>
+</file>
+
+<file path="public/globe.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><g clip-path="url(#a)"><path fill-rule="evenodd" clip-rule="evenodd" d="M10.27 14.1a6.5 6.5 0 0 0 3.67-3.45q-1.24.21-2.7.34-.31 1.83-.97 3.1M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16m.48-1.52a7 7 0 0 1-.96 0H7.5a4 4 0 0 1-.84-1.32q-.38-.89-.63-2.08a40 40 0 0 0 3.92 0q-.25 1.2-.63 2.08a4 4 0 0 1-.84 1.31zm2.94-4.76q1.66-.15 2.95-.43a7 7 0 0 0 0-2.58q-1.3-.27-2.95-.43a18 18 0 0 1 0 3.44m-1.27-3.54a17 17 0 0 1 0 3.64 39 39 0 0 1-4.3 0 17 17 0 0 1 0-3.64 39 39 0 0 1 4.3 0m1.1-1.17q1.45.13 2.69.34a6.5 6.5 0 0 0-3.67-3.44q.65 1.26.98 3.1M8.48 1.5l.01.02q.41.37.84 1.31.38.89.63 2.08a40 40 0 0 0-3.92 0q.25-1.2.63-2.08a4 4 0 0 1 .85-1.32 7 7 0 0 1 .96 0m-2.75.4a6.5 6.5 0 0 0-3.67 3.44 29 29 0 0 1 2.7-.34q.31-1.83.97-3.1M4.58 6.28q-1.66.16-2.95.43a7 7 0 0 0 0 2.58q1.3.27 2.95.43a18 18 0 0 1 0-3.44m.17 4.71q-1.45-.12-2.69-.34a6.5 6.5 0 0 0 3.67 3.44q-.65-1.27-.98-3.1" fill="#666"/></g><defs><clipPath id="a"><path fill="#fff" d="M0 0h16v16H0z"/></clipPath></defs></svg>
+</file>
+
+<file path="public/next.svg">
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 394 80"><path fill="#000" d="M262 0h68.5v12.7h-27.2v66.6h-13.6V12.7H262V0ZM149 0v12.7H94v20.4h44.3v12.6H94v21h55v12.6H80.5V0h68.7zm34.3 0h-17.8l63.8 79.4h17.9l-32-39.7 32-39.6h-17.9l-23 28.6-23-28.6zm18.3 56.7-9-11-27.1 33.7h17.8l18.3-22.7z"/><path fill="#000" d="M81 79.3 17 0H0v79.3h13.6V17l50.2 62.3H81Zm252.6-.4c-1 0-1.8-.4-2.5-1s-1.1-1.6-1.1-2.6.3-1.8 1-2.5 1.6-1 2.6-1 1.8.3 2.5 1a3.4 3.4 0 0 1 .6 4.3 3.7 3.7 0 0 1-3 1.8zm23.2-33.5h6v23.3c0 2.1-.4 4-1.3 5.5a9.1 9.1 0 0 1-3.8 3.5c-1.6.8-3.5 1.3-5.7 1.3-2 0-3.7-.4-5.3-1s-2.8-1.8-3.7-3.2c-.9-1.3-1.4-3-1.4-5h6c.1.8.3 1.6.7 2.2s1 1.2 1.6 1.5c.7.4 1.5.5 2.4.5 1 0 1.8-.2 2.4-.6a4 4 0 0 0 1.6-1.8c.3-.8.5-1.8.5-3V45.5zm30.9 9.1a4.4 4.4 0 0 0-2-3.3 7.5 7.5 0 0 0-4.3-1.1c-1.3 0-2.4.2-3.3.5-.9.4-1.6 1-2 1.6a3.5 3.5 0 0 0-.3 4c.3.5.7.9 1.3 1.2l1.8 1 2 .5 3.2.8c1.3.3 2.5.7 3.7 1.2a13 13 0 0 1 3.2 1.8 8.1 8.1 0 0 1 3 6.5c0 2-.5 3.7-1.5 5.1a10 10 0 0 1-4.4 3.5c-1.8.8-4.1 1.2-6.8 1.2-2.6 0-4.9-.4-6.8-1.2-2-.8-3.4-2-4.5-3.5a10 10 0 0 1-1.7-5.6h6a5 5 0 0 0 3.5 4.6c1 .4 2.2.6 3.4.6 1.3 0 2.5-.2 3.5-.6 1-.4 1.8-1 2.4-1.7a4 4 0 0 0 .8-2.4c0-.9-.2-1.6-.7-2.2a11 11 0 0 0-2.1-1.4l-3.2-1-3.8-1c-2.8-.7-5-1.7-6.6-3.2a7.2 7.2 0 0 1-2.4-5.7 8 8 0 0 1 1.7-5 10 10 0 0 1 4.3-3.5c2-.8 4-1.2 6.4-1.2 2.3 0 4.4.4 6.2 1.2 1.8.8 3.2 2 4.3 3.4 1 1.4 1.5 3 1.5 5h-5.8z"/></svg>
+</file>
+
+<file path="public/vercel.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+</file>
+
+<file path="public/window.svg">
+<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill-rule="evenodd" clip-rule="evenodd" d="M1.5 2.5h13v10a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1zM0 1h16v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 0 12.5zm3.75 4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5M7 4.75a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0m1.75.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5" fill="#666"/></svg>
+</file>
+
+<file path=".gitignore">
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+</file>
+
+<file path="AGENTS.md">
+<!-- BEGIN:nextjs-agent-rules -->
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
+<!-- END:nextjs-agent-rules -->
+</file>
+
+<file path="CLAUDE.md">
+@AGENTS.md
+</file>
+
+<file path="eslint.config.mjs">
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTs from "eslint-config-next/typescript";
+
+const eslintConfig = defineConfig([
+  ...nextVitals,
+  ...nextTs,
+  // Override default ignores of eslint-config-next.
+  globalIgnores([
+    // Default ignores of eslint-config-next:
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+  ]),
+]);
+
+export default eslintConfig;
+</file>
+
+<file path="next.config.ts">
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+};
+
+export default nextConfig;
+</file>
+
+<file path="package.json">
+{
+  "name": "news-bias",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "next": "16.2.4",
+    "next-themes": "^0.4.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "repomix": "^1.13.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
+</file>
+
+<file path="postcss.config.mjs">
+const config = {
+  plugins: {
+    "@tailwindcss/postcss": {},
+  },
+};
+
+export default config;
+</file>
+
+<file path="README.md">
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Getting Started
+
+First, run the development server:
+
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+
+## Learn More
+
+To learn more about Next.js, take a look at the following resources:
+
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+
+## Deploy on Vercel
+
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+</file>
+
+<file path="tsconfig.json">
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts"
+  ],
+  "exclude": ["node_modules"]
+}
+</file>
+
+</files>

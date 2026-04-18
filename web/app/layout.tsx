@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "News Bias — Scan articles for framing & tone",
+  title: "News Bias Detector",
   description:
-    "Paste a news URL or raw text to explore bias signals: framing, tone, sourcing, and more.",
+    "Paste article text to analyze political framing, emotional language, and narrative balance.",
 };
 
 export default function RootLayout({

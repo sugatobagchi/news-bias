@@ -6,15 +6,15 @@ export default function Home() {
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-16 sm:px-6 sm:py-24">
         <header className="mb-10 text-center sm:mb-12">
           <p className="text-sm font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-            News bias
+            News Bias Detector
           </p>
           <h1 className="mt-2 text-balance text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50 sm:text-4xl">
-            Understand framing before you share
+            Understand bias before you share
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-pretty text-base text-zinc-600 dark:text-zinc-400">
-            Paste a link or raw article text. We scan for signals of framing,
-            tone, and balance—starting with a structured preview you can extend
-            with real analysis.
+            Paste raw article text below. We run it through a small language
+            model tuned for political framing, emotional language, and narrative
+            balance—then summarize the score, category, and rationale.
           </p>
         </header>
 

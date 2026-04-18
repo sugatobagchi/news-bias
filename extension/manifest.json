@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "News Bias Detector",
+  "version": "1.0.0",
+  "description": "Scan the current page's article text and analyze bias via the News Bias Detector API.",
+  "action": {
+    "default_title": "News Bias Detector",
+    "default_popup": "popup.html"
+  },
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ]
+}

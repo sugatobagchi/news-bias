@@ -1,115 +1,110 @@
-import type { AnalyzeResponse, BiasLean } from "@/lib/analysis-types";
+import type { AnalyzeApiSuccess } from "@/lib/analysis-types";
 
-const leanStyles: Record<
-  BiasLean,
-  { chip: string; bar: string; ring: string }
-> = {
-  left: {
-    chip:
-      "bg-sky-50 text-sky-900 ring-sky-200/80 dark:bg-sky-950/50 dark:text-sky-100 dark:ring-sky-800",
-    bar: "bg-sky-500",
-    ring: "ring-sky-400/30",
-  },
-  center: {
-    chip:
-      "bg-emerald-50 text-emerald-900 ring-emerald-200/80 dark:bg-emerald-950/50 dark:text-emerald-100 dark:ring-emerald-800",
-    bar: "bg-emerald-500",
-    ring: "ring-emerald-400/30",
-  },
-  right: {
-    chip:
-      "bg-rose-50 text-rose-900 ring-rose-200/80 dark:bg-rose-950/50 dark:text-rose-100 dark:ring-rose-800",
-    bar: "bg-rose-500",
-    ring: "ring-rose-400/30",
-  },
-  mixed: {
-    chip:
-      "bg-violet-50 text-violet-900 ring-violet-200/80 dark:bg-violet-950/50 dark:text-violet-100 dark:ring-violet-800",
-    bar: "bg-violet-500",
-    ring: "ring-violet-400/30",
-  },
-};
-
-function ScoreBar({ score, lean }: { score: number; lean: BiasLean }) {
-  const pct = Math.min(100, Math.max(0, score));
-  return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200/80 dark:bg-zinc-800">
-      <div
-        className={`h-full rounded-full transition-all ${leanStyles[lean].bar}`}
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  );
+function formatScore(value: string | number | null): string {
+  if (value === null) return "—";
+  if (typeof value === "number") return String(value);
+  return value;
 }
 
-export function AnalysisResults({ data }: { data: AnalyzeResponse }) {
-  const overall = leanStyles[data.overallLean];
+export function AnalysisResults({ data }: { data: AnalyzeApiSuccess }) {
+  const { bias_score, bias_category, analysis_summary, insufficient_content } =
+    data;
 
   return (
     <section className="mt-10 w-full" aria-live="polite">
       <div className="rounded-2xl border border-zinc-200/90 bg-white p-6 shadow-sm ring-1 ring-zinc-950/5 dark:border-zinc-800 dark:bg-zinc-950 dark:ring-white/10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Results
-            </p>
-            <h2 className="mt-1 text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-              {data.headline}
-            </h2>
-          </div>
-          <div
-            className={`inline-flex items-center gap-2 self-start rounded-full px-3 py-1 text-sm font-medium ring-1 ${overall.chip}`}
-          >
-            <span
-              className={`size-2 rounded-full ring-2 ${overall.ring} ${overall.bar}`}
-              aria-hidden
-            />
-            Overall: {data.overallLean} · {data.overallScore}/100
-          </div>
-        </div>
-
-        <p className="mt-4 text-sm leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {data.summary}
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Results
         </p>
+        <h2 className="mt-1 text-xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          Bias analysis
+        </h2>
 
-        <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-          {data.sourceNote}
-        </p>
+        {insufficient_content ? (
+          <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+            The model flagged this excerpt as too short or not news-like to
+            score reliably.
+          </p>
+        ) : null}
 
-        <div className="mt-6 space-y-4">
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Bias signals
+        <dl className="mt-6 grid gap-6 sm:grid-cols-2">
+          <div className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Bias score
+            </dt>
+            <dd className="mt-2 text-2xl font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+              {formatScore(bias_score)}
+            </dd>
+          </div>
+          <div className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/40">
+            <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Bias category
+            </dt>
+            <dd className="mt-2 text-sm font-medium leading-relaxed text-zinc-900 dark:text-zinc-100">
+              {bias_category ?? "—"}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="mt-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Analysis summary
           </h3>
-          <ul className="space-y-4">
-            {data.categories.map((c) => {
-              const s = leanStyles[c.lean];
-              return (
-                <li
-                  key={c.id}
-                  className="rounded-xl border border-zinc-100 bg-zinc-50/80 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/40"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {c.label}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${s.chip}`}
-                    >
-                      {c.lean} · {c.score}
-                    </span>
-                  </div>
-                  <div className="mt-3">
-                    <ScoreBar score={c.score} lean={c.lean} />
-                  </div>
-                  <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-                    {c.note}
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-700 dark:text-zinc-300">
+            {analysis_summary ?? "—"}
+          </p>
         </div>
+
+        <ExtraDetails details={data.details} />
       </div>
     </section>
   );
+}
+
+function ExtraDetails({
+  details,
+}: {
+  details: Record<string, unknown>;
+}) {
+  const keys = Object.keys(details).filter(
+    (k) =>
+      ![
+        "bias_score",
+        "bias_category",
+        "analysis_summary",
+        "insufficient_content",
+      ].includes(k)
+  );
+  if (keys.length === 0) return null;
+
+  return (
+    <details className="mt-6 rounded-xl border border-zinc-100 bg-zinc-50/50 p-4 dark:border-zinc-800/80 dark:bg-zinc-900/30">
+      <summary className="cursor-pointer text-sm font-medium text-zinc-800 dark:text-zinc-200">
+        Additional model fields
+      </summary>
+      <dl className="mt-3 space-y-3 text-sm">
+        {keys.map((key) => (
+          <div key={key}>
+            <dt className="font-mono text-xs text-zinc-500 dark:text-zinc-400">
+              {key}
+            </dt>
+            <dd className="mt-0.5 text-zinc-700 dark:text-zinc-300">
+              {formatDetailValue(details[key])}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </details>
+  );
+}
+
+function formatDetailValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
 }

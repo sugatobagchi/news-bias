@@ -1,7 +1,6 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
 
 type ThemeChoice = "system" | "light" | "dark";
 
@@ -13,20 +12,6 @@ const options: { value: ThemeChoice; label: string }[] = [
 
 export function ThemeToggle() {
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return (
-      <div
-        className="h-9 w-54 rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80"
-        aria-hidden
-      />
-    );
-  }
 
   const active: ThemeChoice =
     theme === "light" || theme === "dark" ? theme : "system";

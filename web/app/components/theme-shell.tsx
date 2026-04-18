@@ -1,7 +1,20 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { ThemeProvider } from "./theme-provider";
-import { ThemeToggle } from "./theme-toggle";
+
+const ThemeToggle = dynamic(
+  () => import("./theme-toggle").then((mod) => mod.ThemeToggle),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="h-9 w-54 rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80"
+        aria-hidden
+      />
+    ),
+  }
+);
 
 export function ThemeShell({ children }: { children: React.ReactNode }) {
   return (

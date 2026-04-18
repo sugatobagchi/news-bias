@@ -1,100 +1,128 @@
 import { NextResponse } from "next/server";
-import type {
-  AnalyzeRequestBody,
-  AnalyzeResponse,
-  BiasCategoryResult,
-} from "@/lib/analysis-types";
+import {
+  normalizeBiasAnalysis,
+  parseModelAnalysisString,
+} from "@/lib/parse-analysis";
 
-function mockAnalysis(input: string, mode: AnalyzeRequestBody["mode"]): AnalyzeResponse {
-  const preview =
-    input.trim().slice(0, 120) + (input.trim().length > 120 ? "…" : "");
-  const categories: BiasCategoryResult[] = [
-    {
-      id: "framing",
-      label: "Framing",
-      score: 62,
-      lean: "left",
-      note: "Issue is framed around systemic causes rather than individual fault.",
-    },
-    {
-      id: "tone",
-      label: "Tone & loaded language",
-      score: 48,
-      lean: "mixed",
-      note: "Some emotionally charged terms; mostly descriptive.",
-    },
-    {
-      id: "sourcing",
-      label: "Sourcing & balance",
-      score: 55,
-      lean: "center",
-      note: "Cites official statements; limited counter-perspective.",
-    },
-    {
-      id: "omission",
-      label: "Omission",
-      score: 71,
-      lean: "right",
-      note: "Alternative explanations receive little space.",
-    },
-  ];
+/** Vercel / long inference — adjust if your host uses different limits */
+export const maxDuration = 120;
 
-  return {
-    headline: mode === "url" ? "Article preview" : "Pasted text preview",
-    summary:
-      preview ||
-      "No extractable preview. Replace this with fetched article text or LLM output in production.",
-    overallLean: "mixed",
-    overallScore: 54,
-    categories,
-    sourceNote:
-      mode === "url"
-        ? "URL received; full article fetch and parsing is not wired yet—showing placeholder bias breakdown."
-        : "Analysis is illustrative only until a model or rules engine is connected.",
-  };
+const DEFAULT_INFERENCE_URL =
+  "https://news-bias-server-896252675202.asia-south1.run.app/analyze";
+
+const corsHeaders: Record<string, string> = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+function inferenceUrl(): string {
+  return (
+    process.env.NEWS_BIAS_INFERENCE_URL?.trim() || DEFAULT_INFERENCE_URL
+  );
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
 export async function POST(request: Request) {
-  let body: AnalyzeRequestBody;
+  let body: unknown;
   try {
-    body = (await request.json()) as AnalyzeRequestBody;
+    body = await request.json();
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON body." },
-      { status: 400 }
+      { status: 400, headers: corsHeaders }
     );
   }
 
-  const mode = body?.mode;
-  const value = typeof body?.value === "string" ? body.value : "";
+  const text =
+    typeof body === "object" &&
+    body !== null &&
+    "text" in body &&
+    typeof (body as { text?: unknown }).text === "string"
+      ? (body as { text: string }).text.trim()
+      : "";
 
-  if (mode !== "url" && mode !== "text") {
+  if (!text) {
     return NextResponse.json(
-      { error: 'Body must include mode: "url" or "text".' },
-      { status: 400 }
+      { error: "Request body must include a non-empty \"text\" field." },
+      { status: 400, headers: corsHeaders }
     );
   }
 
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return NextResponse.json(
-      { error: "Input cannot be empty." },
-      { status: 400 }
-    );
-  }
+  const upstream = inferenceUrl();
+  let upstreamJson: unknown;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 110_000);
+    const res = await fetch(upstream, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: ac.signal,
+    });
+    clearTimeout(t);
 
-  if (mode === "url") {
+    const rawText = await res.text();
     try {
-      // Basic URL shape check; real fetching not implemented yet.
-      new URL(trimmed);
+      upstreamJson = JSON.parse(rawText) as unknown;
     } catch {
       return NextResponse.json(
-        { error: "Please enter a valid URL." },
-        { status: 400 }
+        {
+          error: "Inference server returned non-JSON.",
+        },
+        { status: 502, headers: corsHeaders }
       );
     }
+
+    if (!res.ok) {
+      return NextResponse.json(
+        {
+          error: `Inference server error (${res.status}).`,
+        },
+        { status: 502, headers: corsHeaders }
+      );
+    }
+  } catch (e) {
+    const msg =
+      e instanceof Error && e.name === "AbortError"
+        ? "Inference request timed out."
+        : "Could not reach the inference server.";
+    return NextResponse.json(
+      { error: msg },
+      { status: 502, headers: corsHeaders }
+    );
   }
 
-  const data: AnalyzeResponse = mockAnalysis(trimmed, mode);
-  return NextResponse.json(data);
+  const analysisField =
+    typeof upstreamJson === "object" &&
+    upstreamJson !== null &&
+    "analysis" in upstreamJson &&
+    typeof (upstreamJson as { analysis?: unknown }).analysis === "string"
+      ? (upstreamJson as { analysis: string }).analysis
+      : null;
+
+  if (!analysisField) {
+    return NextResponse.json(
+      { error: "Inference response missing an \"analysis\" string." },
+      { status: 502, headers: corsHeaders }
+    );
+  }
+
+  try {
+    const parsed = parseModelAnalysisString(analysisField);
+    const normalized = normalizeBiasAnalysis(parsed);
+    return NextResponse.json(normalized, { headers: corsHeaders });
+  } catch (e) {
+    const hint =
+      e instanceof Error ? e.message : "Failed to parse model output.";
+    return NextResponse.json(
+      {
+        error: `Could not parse model JSON: ${hint}`,
+      },
+      { status: 502, headers: corsHeaders }
+    );
+  }
 }
