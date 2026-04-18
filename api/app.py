@@ -1,15 +1,20 @@
 import os
+import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
-from transformers import pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 app = FastAPI()
 
-print("Loading model into memory...")
-pipe = pipeline(
-    "text-generation",
-    model="sugatobagchi/smolified-news-bias-detector",
-    device=-1,  # Forces CPU execution
+MODEL_ID = "sugatobagchi/smolified-news-bias-detector"
+
+print("Loading tokenizer and model into CPU memory...")
+# Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+
+# Load model explicitly for CPU to prevent memory fragmentation
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID, device_map="cpu", torch_dtype=torch.float32
 )
 print("Model loaded successfully!")
 
@@ -20,27 +25,46 @@ class RequestBody(BaseModel):
 
 @app.post("/analyze")
 def analyze_text(request: RequestBody):
-    # Use the exact system prompt from your fine-tuning dataset
-    system_prompt = "You are an expert media analyst specializing in Indian and global news. You analyze raw text extracted from news articles or browser pages for political bias, emotional language, and narrative manipulation."
+    # The exact system prompt from the Smolify model card
+    system_prompt = "You are an expert media analyst specializing in Indian and global news. Analyze the input text for political bias, emotional language, and narrative manipulation, providing consistent scores on a 1-10 scale."
 
-    # Format using the standard chat template array
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": request.text},
     ]
 
-    # Generate the response
-    result = pipe(
-        messages,
-        max_new_tokens=500,
-        max_length=None,  # <-- This silences the warning in your Cloud Run logs
-        temperature=0.1,
-        return_full_text=False,  # <-- Crucial: Ensures the API only returns the JSON, not the prompt
+    # 1. Apply the chat template manually
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
     )
 
-    return {"analysis": result[0]["generated_text"]}
+    # 2. THE CRITICAL GEMMA 3 FIX: Strip the <bos> token
+    if prompt_text.startswith("<bos>"):
+        prompt_text = prompt_text[5:]
+
+    # 3. Convert text to tensor format
+    inputs = tokenizer(prompt_text, return_tensors="pt").to(model.device)
+
+    # 4. Generate the response with explicit parameters to silence warnings
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=500,
+            temperature=0.1,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+    # 5. Strip the original prompt from the output tensor so we only return the JSON
+    input_length = inputs.input_ids.shape[1]
+    generated_tokens = outputs[0][input_length:]
+
+    # Decode the final JSON string
+    result_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+    return {"analysis": result_text}
 
 
 @app.get("/")
 def read_root():
-    return {"status": "Online", "model": "news-bias-smolify", "version": "1.1"}
+    return {"status": "Online", "model": "news-bias-smolify", "version": "1.3"}
