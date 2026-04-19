@@ -10,10 +10,12 @@ RUN pip install torch --index-url https://download.pytorch.org/whl/cpu
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# PRE-DOWNLOAD THE MODEL: This bakes the weights into the container
-RUN python -c "from transformers import pipeline; pipeline('text-generation', model='sugatobagchi/smolified-news-bias-detector', device=-1)"
+# Bake full model snapshot into the image (Hub only at build time; optional HF_TOKEN for rate limits)
+COPY download_model.py .
+ENV MODEL_PATH=/app/model
+RUN python download_model.py
 
-# Copy your server code
+# Copy server code after heavy layers so code edits don't re-download weights
 COPY app.py .
 
 # Cloud Run expects the server to listen on port 8080 by default

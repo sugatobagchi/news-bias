@@ -1,4 +1,5 @@
 import os
+
 import torch
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -7,12 +8,20 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 app = FastAPI()
 
 MODEL_ID = "sugatobagchi/smolified-news-bias-detector"
+# Docker sets this to /app/model (baked at build). Local dev can omit to pull from Hub.
+MODEL_PATH = os.environ.get("MODEL_PATH", MODEL_ID)
+# In Docker, MODEL_PATH is /app/model (baked). Locally, default hub id → allow download.
+_LOCAL_ONLY = os.path.isdir(MODEL_PATH)
 
-print("Loading tokenizer and model into CPU memory...")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+print(f"Loading tokenizer and model into CPU memory from {MODEL_PATH!r}...")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, local_files_only=_LOCAL_ONLY)
 
 # REMOVED device_map="cpu" to prevent the 'accelerate' crash
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=torch.float32)
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_PATH,
+    dtype=torch.float32,
+    local_files_only=_LOCAL_ONLY,
+)
 print("Model loaded successfully!")
 
 

@@ -2,3 +2,4 @@ fastapi
 uvicorn
 transformers
 pydantic
+huggingface_hub>=0.20.0
